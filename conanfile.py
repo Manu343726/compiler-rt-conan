@@ -32,12 +32,10 @@ def extract_from_url(url):
 
 
 def download_extract_llvm_component(component, release, extract_to):
-    extract_from_url("https://bintray.com/artifact/download/"
-                     "polysquare/LLVM/{comp}-{ver}.src.zip"
-                     "".format(ver=release, comp=component))
-    shutil.move("{comp}-{ver}.src".format(comp=component,
-                                          ver=release),
-                extract_to)
+    major, minor, _ = release.split(".")
+    release_branch = "release_{}{}".format(major, minor)
+    os.system("git clone https://github.com/llvm-mirror/{} --branch {} {}".format(
+        component, release_branch, extract_to))
 
 
 BUILD_DIR = ("C:/__build" if platform.system == "Windows"
@@ -48,12 +46,13 @@ class CompilerRTConan(ConanFile):
     name = "compiler-rt"
     version = os.environ.get("CONAN_VERSION_OVERRIDE", VERSION)
     generators = "cmake"
-    requires = ("llvm/3.8.0@smspillaz/stable", )
-    url = "http://github.com/smspillaz/compiler-rt-conan"
+    requires = ("llvm/3.8.0@Manu343726/testing", )
+    url = "http://github.com/Manu343726/compiler-rt-conan"
     license = "BSD"
     settings = "os", "compiler", "build_type", "arch"
     options = {"shared": [True, False]}
     default_options = "shared=True"
+    exports_sources="*.patch"
 
     def config(self):
         try:  # Try catch can be removed when conan 0.8 is released
@@ -66,26 +65,25 @@ class CompilerRTConan(ConanFile):
                                         "compiler-rt")
 
     def build(self):
-        cmake = CMake(self.settings)
+        cmake = CMake(self)
 
         for component in ["compiler-rt"]:
-            build = os.path.join(BUILD_DIR, component)
             install = os.path.join(INSTALL_DIR, component)
             try:
                 os.makedirs(install)
             except OSError:
                 pass
 
-            if not os.path.exists(os.path.join(self.conanfile_directory,
+            if not os.path.exists(os.path.join(self.build_folder,
                                                component,
                                                "CMakeListsOriginal.txt")):
-                shutil.move(os.path.join(self.conanfile_directory,
+                shutil.move(os.path.join(self.build_folder,
                                          component,
                                          "CMakeLists.txt"),
-                            os.path.join(self.conanfile_directory,
+                            os.path.join(self.build_folder,
                                          component,
                                          "CMakeListsOriginal"))
-                with open(os.path.join(self.conanfile_directory,
+                with open(os.path.join(self.build_folder,
                                        component,
                                        "CMakeLists.txt"), "w") as cmakelists_file:
                     cmakelists_file.write("cmake_minimum_required(VERSION 2.8)\n"
@@ -100,40 +98,27 @@ class CompilerRTConan(ConanFile):
                                           "message (STATUS \"${CMAKE_PROGRAM_PATH}\")\n"
                                           "include(CMakeListsOriginal)\n")
 
-            try:
-                shutil.rmtree(build)
-            except OSError:
-                pass
-
-            with in_dir(build):
-                self.run("cmake \"%s\" %s"
-                         " -DCLANG_INCLUDE_DOCS=OFF"
-                         " -DCLANG_INCLUDE_TESTS=OFF"
-                         " -DCLANG_TOOLS_INCLUDE_EXTRA_DOCS=OFF"
-                         " -DCOMPILER_RT_INCLUDE_TESTS=OFF"
-                         " -DLIBCXX_INCLUDE_TESTS=OFF"
-                         " -DLIBCXX_INCLUDE_DOCS=OFF"
-                         " -DLLVM_INCLUDE_TESTS=OFF"
-                         " -DLLVM_INCLUDE_EXAMPLES=OFF"
-                         " -DLLVM_INCLUDE_GO_TESTS=OFF"
-                         " -DLLVM_BUILD_TESTS=OFF"
-                         " -DLIBCXXABI_LIBCXX_INCLUDES=\"%s/libcxx/include\""
-                         " -DCMAKE_VERBOSE_MAKEFILE=1"
-                         " -DLLVM_TARGETS_TO_BUILD=X86"
-                         " -DCMAKE_INSTALL_PREFIX=\"%s\""
-                         " -DBUILD_SHARED_LIBS=%s"
-                         "" % (os.path.join(self.conanfile_directory,
-                                            component),
-                               cmake.command_line,
-                               os.path.abspath(os.path.join(build, "..")),
-                               os.path.join(self.conanfile_directory,
-                                            install),
-                               ("ON" if self.options.shared else "OFF")))
-                self.run("cmake --build . {cfg} -- {j}"
-                         "".format(cfg=cmake.build_config,
-                                   j=("-j4" if platform.system() != "Windows"
-                                      else "")))
-                self.run("cmake --build . -- install")
+                cmake.configure(defs={
+                 "CLANG_INCLUDE_DOCS": False,
+                 "CLANG_INCLUDE_TESTS": False,
+                 "CLANG_TOOLS_INCLUDE_EXTRA_DOCS": False,
+                 "COMPILER_RT_INCLUDE_TESTS": False,
+                 "LIBCXX_INCLUDE_TESTS": False,
+                 "LIBCXX_INCLUDE_DOCS": False,
+                 "LLVM_INCLUDE_TESTS": False,
+                 "LLVM_INCLUDE_EXAMPLES": False,
+                 "LLVM_INCLUDE_GO_TESTS": False,
+                 "LLVM_BUILD_TESTS": False,
+                 "CMAKE_VERBOSE_MAKEFILE": True,
+                 "LLVM_TARGETS_TO_BUILD": "X86",
+                 # AddressSanitizers disabled, cannot be built with latest glibc
+                 # I tried first to patch the sanitizers, without result. See sanitizer_stack_t_glibc.patch
+                 "COMPILER_RT_BUILD_SANITIZERS": False,
+                 "CMAKE_INSTALL_PREFIX": os.path.join(self.build_folder, INSTALL_DIR),
+                 "BUILD_SHARED_LIBS": self.options.shared
+                }, source_folder="compiler-rt")
+                cmake.build()
+                cmake.install()
 
     def package(self):
         for component in ["compiler-rt"]:
