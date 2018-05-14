@@ -54,11 +54,15 @@ class CompilerRTConan(ConanFile):
     default_options = "shared=True"
     exports_sources="*.patch"
 
-    def config(self):
-        try:  # Try catch can be removed when conan 0.8 is released
-            del self.settings.compiler.libcxx
-        except:
-            pass
+    def configure(self):
+        del self.settings.compiler.libcxx
+
+        if "shared" in self.options:
+            self.options["llvm"].shared = self.options.shared
+
+    def config_options(self):
+        if self.settings.os == "Windows":
+            del self.options.shared
 
     def source(self):
         download_extract_llvm_component("compiler-rt", CompilerRTConan.version,
@@ -115,7 +119,7 @@ class CompilerRTConan(ConanFile):
                  # I tried first to patch the sanitizers, without result. See sanitizer_stack_t_glibc.patch
                  "COMPILER_RT_BUILD_SANITIZERS": False,
                  "CMAKE_INSTALL_PREFIX": os.path.join(self.build_folder, INSTALL_DIR),
-                 "BUILD_SHARED_LIBS": self.options.shared
+                 "BUILD_SHARED_LIBS": self.options.shared if "shared" in self.options else False
                 }, source_folder="compiler-rt")
                 cmake.build()
                 cmake.install()
